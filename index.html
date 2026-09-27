@@ -64,7 +64,7 @@
     allowRealBack=true;
   };
 
-  // Evita que los CTA internos creen entradas nuevas en el historial de iOS.
+  // CTA internos: scroll suave sin alterar el historial.
   document.addEventListener('click',e=>{
     const a=e.target.closest('a[href^="#"]');
     if(!a)return;
@@ -76,15 +76,14 @@
     target.scrollIntoView({behavior:'smooth',block:'start'});
   });
 
-  // Escritorio: intención de salida al mover el cursor fuera por arriba.
+  // Escritorio: intención de salida por la parte superior.
   if(!isMobile){
     document.addEventListener('mouseout',e=>{
       if(e.clientY<=0&&!e.relatedTarget)openModal();
     });
   }
 
-  // iPhone/iPad: captura el primer gesto/navegación de volver atrás.
-  // No interfiere con los CTA internos porque no alteramos el hash.
+  // Móvil/iOS: primer gesto de volver atrás.
   if(isMobile && history.pushState){
     const cleanUrl=location.href.split('#')[0];
     history.replaceState({clonariaBase:true},'',cleanUrl);
@@ -97,16 +96,13 @@
         return;
       }
       if(allowRealBack){
-        // Este popstate solo quitó nuestro estado protector.
-        // Retrocedemos una vez más para respetar la intención real del usuario.
         setTimeout(()=>history.back(),0);
       }
     });
   }
 
-  // iOS no expone el toque sobre la X del navegador a la página.
-  // Si Safari se oculta y el usuario vuelve a la misma página,
-  // mostramos el mensaje en el regreso, nunca al pulsar un CTA.
+  // iOS: si el navegador oculta la página y luego el usuario vuelve,
+  // mostramos el exit intent al regresar.
   let hiddenByBrowser=false;
   if(isIOS){
     document.addEventListener('visibilitychange',()=>{
@@ -118,6 +114,54 @@
       }
     });
   }
+
+  // iPhone / móvil: detecta una subida rápida hacia la zona superior.
+  // Solo se arma después de que el usuario ya haya recorrido suficiente página.
+  let lastY=window.scrollY;
+  let lastT=performance.now();
+  let maxY=lastY;
+  let upwardDistance=0;
+  let upwardStartedAt=0;
+
+  const detectFastExitScroll=()=>{
+    if(!isMobile || exitShown)return;
+
+    const now=performance.now();
+    const y=window.scrollY;
+    maxY=Math.max(maxY,y);
+
+    const engagedEnough=maxY>Math.max(700,document.documentElement.scrollHeight*.22);
+    const movingUp=y<lastY;
+
+    if(movingUp){
+      const delta=lastY-y;
+
+      if(!upwardStartedAt || now-upwardStartedAt>1100){
+        upwardStartedAt=now;
+        upwardDistance=0;
+      }
+
+      upwardDistance+=delta;
+
+      const elapsed=Math.max(1,now-upwardStartedAt);
+      const speed=upwardDistance/elapsed;
+      const nearTop=y<Math.max(260,window.innerHeight*.55);
+      const strongUpwardIntent=
+        upwardDistance>Math.max(420,window.innerHeight*.65) &&
+        elapsed<1000 &&
+        speed>.45;
+
+      if(engagedEnough && nearTop && strongUpwardIntent){
+        openModal();
+      }
+    }else if(y>lastY){
+      upwardDistance=0;
+      upwardStartedAt=0;
+    }
+
+    lastY=y;
+    lastT=now;
+  };
 
   modal?.querySelector('.exit-close')?.addEventListener('click',closeModal);
   modal?.querySelector('.exit-skip')?.addEventListener('click',closeModal);
@@ -139,8 +183,11 @@
     scrollIdleTimer=setTimeout(()=>sticky.classList.remove('is-scrolling'),850);
   };
 
-  if(isMobile && sticky){
-    window.addEventListener('scroll',activateSticky,{passive:true});
+  if(isMobile){
+    window.addEventListener('scroll',()=>{
+      activateSticky();
+      detectFastExitScroll();
+    },{passive:true});
     window.addEventListener('touchmove',activateSticky,{passive:true});
   }
 })();
