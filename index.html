@@ -47,7 +47,9 @@
 
   const modal=document.getElementById('exitModal');
   const isMobile=window.matchMedia('(max-width: 800px)').matches;
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
   let exitShown=false;
+  let allowRealBack=false;
 
   const openModal=()=>{
     if(exitShown||!modal)return;
@@ -59,21 +61,59 @@
   const closeModal=()=>{
     modal?.classList.remove('open');
     modal?.setAttribute('aria-hidden','true');
+    allowRealBack=true;
   };
 
-  // Escritorio: intención de salida al mover el cursor fuera por la parte superior.
+  // Evita que los CTA internos creen entradas nuevas en el historial de iOS.
+  document.addEventListener('click',e=>{
+    const a=e.target.closest('a[href^="#"]');
+    if(!a)return;
+    const id=a.getAttribute('href');
+    if(!id || id==='#')return;
+    const target=document.querySelector(id);
+    if(!target)return;
+    e.preventDefault();
+    target.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+
+  // Escritorio: intención de salida al mover el cursor fuera por arriba.
   if(!isMobile){
     document.addEventListener('mouseout',e=>{
       if(e.clientY<=0&&!e.relatedTarget)openModal();
     });
   }
 
-  // Móvil: el primer intento de volver atrás queda interceptado.
-  // Al cerrar el modal, el siguiente intento de volver atrás sale normalmente.
+  // iPhone/iPad: captura el primer gesto/navegación de volver atrás.
+  // No interfiere con los CTA internos porque no alteramos el hash.
   if(isMobile && history.pushState){
-    history.pushState({clonariaExitGuard:true},'',location.href);
+    const cleanUrl=location.href.split('#')[0];
+    history.replaceState({clonariaBase:true},'',cleanUrl);
+    history.pushState({clonariaGuard:true},'',cleanUrl);
+
     window.addEventListener('popstate',()=>{
       if(!exitShown){
+        history.pushState({clonariaGuard:true},'',cleanUrl);
+        openModal();
+        return;
+      }
+      if(allowRealBack){
+        // Este popstate solo quitó nuestro estado protector.
+        // Retrocedemos una vez más para respetar la intención real del usuario.
+        setTimeout(()=>history.back(),0);
+      }
+    });
+  }
+
+  // iOS no expone el toque sobre la X del navegador a la página.
+  // Si Safari se oculta y el usuario vuelve a la misma página,
+  // mostramos el mensaje en el regreso, nunca al pulsar un CTA.
+  let hiddenByBrowser=false;
+  if(isIOS){
+    document.addEventListener('visibilitychange',()=>{
+      if(document.visibilityState==='hidden'){
+        hiddenByBrowser=true;
+      }else if(hiddenByBrowser && !exitShown){
+        hiddenByBrowser=false;
         openModal();
       }
     });
@@ -81,20 +121,22 @@
 
   modal?.querySelector('.exit-close')?.addEventListener('click',closeModal);
   modal?.querySelector('.exit-skip')?.addEventListener('click',closeModal);
-  modal?.querySelector('.exit-go')?.addEventListener('click',closeModal);
+  modal?.querySelector('.exit-go')?.addEventListener('click',()=>{
+    allowRealBack=true;
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden','true');
+  });
   modal?.addEventListener('click',e=>{if(e.target===modal)closeModal()});
   document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
 
-  // Botón flotante móvil: visible mientras hay scroll y tenue mientras se lee.
+  // Botón flotante móvil: visible mientras se desplaza y tenue mientras se lee.
   const sticky=document.querySelector('.sticky');
   let scrollIdleTimer=null;
   const activateSticky=()=>{
     if(!isMobile||!sticky)return;
     sticky.classList.add('is-scrolling');
     clearTimeout(scrollIdleTimer);
-    scrollIdleTimer=setTimeout(()=>{
-      sticky.classList.remove('is-scrolling');
-    },850);
+    scrollIdleTimer=setTimeout(()=>sticky.classList.remove('is-scrolling'),850);
   };
 
   if(isMobile && sticky){
